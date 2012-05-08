@@ -1,0 +1,3 @@
+To run coarse matchup
+---------------------
+./coarse_matchup.py <WSDL>
