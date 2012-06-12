@@ -1,14 +1,71 @@
 #!/usr/bin/env python
 
-import os, sys, csv
+import os, sys, csv, re, calendar
 from SOAPpy.WSDL import Proxy
 from datetime import datetime, timedelta
-import elementtree.ElementTree as ET
+import xml.etree.ElementTree as ET
+import numpy as N
+
+
+#compiled regular expressions
+ISO_DT_RE = re.compile(r'^(\d{4})[/-](\d{2})[/-](\d{2})[\s*T](\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z?$')
+ISO_DT_ONLY_RE = re.compile(r'^(\d{4})[/-](\d{2})[/-](\d{2})$')
+NOAA_DT_RE = re.compile(r'^(\d{4})(\d{2})(\d{2})\s+(\d{2}):(\d{2})$')
 
 
 # NOAA data file for LAX
 NOAA_file = os.path.join("data", "NOAA", "36258.csv")
 
+
+def getISOTimeElts(dtStr):
+    """
+    Return tuple of (year,month,day,hour,minute,second) from date time string.
+    """
+
+    match = ISO_DT_RE.match(dtStr)
+    if match: year, month, day, hour, minute, second = map(int,match.groups())
+    else:
+        match = ISO_DT_ONLY_RE.match(dtStr)
+        if match:
+            year, month, day = map(int,match.groups())
+            hour, minute, second = 0,0,0
+        else: raise RuntimeError("Failed to recognize date format: %s" % dtStr)
+    return year, month, day, hour, minute, second
+
+def getDatetime(dtStr):
+    """Return datetime object from date time string."""
+
+    year, month, day, hour, minute, second = getISOTimeElts(dtStr)
+    return datetime.datetime(year=year, month=month, day=day,
+                             hour=hour,minute=minute, second=second)
+
+def getEpoch(timeStr):
+    """Return epoch from a time string: '%Y-%m-%d %H:%M:%S'."""
+
+    return float(calendar.timegm(getISOTimeElts(timeStr)))
+
+def getNOAATimeElts(dtStr):
+    """
+    Return tuple of (year,month,day,hour,minute) from NOAA date time string.
+    """
+
+    match = NOAA_DT_RE.match(dtStr)
+    if match: year, month, day, hour, minute = map(int,match.groups())
+    else: raise RuntimeError("Failed to recognize date format: %s" % dtStr)
+    return year, month, day, hour, minute, 0
+
+def getNOAAEpoch(timeStr):
+    """Return epoch from a time string: '%Y%m%d %H:%M'."""
+
+    return float(calendar.timegm(getNOAATimeElts(timeStr)))
+
+def getNOAARows(file):
+    """Return data rows from NOAA file."""
+
+    with open(file) as f:
+        rows = [row for row in csv.DictReader(f)]
+    return rows
+ 
 def main():
 
     # get proxy
@@ -16,72 +73,71 @@ def main():
     proxy = Proxy(wsdl)
 
     # read in NOAA data
-    f = open(NOAA_file)
-    reader = csv.DictReader(f)
-    for row in reader:
+    rows = getNOAARows(NOAA_file)
 
-        # get ISO 8601 datetime from NOAA data
-        yy = int(row['DATE'][0:4])
-        mm = int(row['DATE'][4:6])
-        dd = int(row['DATE'][6:8])
-        hh = int(row['DATE'][9:11])
-        mn = int(row['DATE'][12:14])
-        dt = datetime(year=yy, month=mm, day=dd, hour=hh, minute=mn)
-    
-        # get start and end date surrounding NOAA date
-        start_dt = dt - timedelta(seconds=3600)
-        end_dt = dt + timedelta(seconds=3600)
-        print start_dt, end_dt
+    #get bbox with slop
+    noaa_lat = float(rows[0]['LATITUDE'])
+    noaa_lon = float(rows[0]['LONGITUDE'])
+    min_lat = noaa_lat - 3.
+    max_lat = noaa_lat + 3.
+    min_lon = noaa_lon - 3.
+    max_lon = noaa_lon + 3.
+    #print noaa_lat, noaa_lon
 
-        # get lat/lon
-        noaa_lat = float(row['LATITUDE'])
-        noaa_lon = float(row['LONGITUDE'])
+    # get start and end date of NOAA data
+    str_dt = datetime(*getNOAATimeElts(rows[0]['DATE']))
+    end_dt = datetime(*getNOAATimeElts(rows[-1]['DATE']))
+    #print str_dt, end_dt
 
-        # bbox
-        minLat = noaa_lat - 3.
-        maxLat = noaa_lat + 3.
-        minLon = noaa_lon - 3.
-        maxLon = noaa_lon + 3.
-        #minLat = -90
-        #maxLat = 90
-        #minLon = -180
-        #maxLon = 180
-    
-        # get matching AIRS metadata info
-        #results = proxy.geoRegionQuery("AIRS", None, None, "2010-01-01T00:00:00Z",
-        #                               "2010-01-01T00:01:00Z", -180, 180, -90, 90,
-        #                               "Large")
-        results = proxy.geoRegionQuery("AIRS", None, None, 
-            "%04d-%02d-%02dT%02d:%02d:00Z" % (start_dt.year, start_dt.month, start_dt.day, start_dt.hour, start_dt.minute),
-            "%04d-%02d-%02dT%02d:%02d:00Z" % (end_dt.year, end_dt.month, end_dt.day, end_dt.hour, end_dt.minute), minLat, maxLat, minLon, maxLon,
-            "Large")
+    # get matching AIRS metadata info
+    results = proxy.geoRegionQuery("AIRS", None, None, 
+                                   str_dt.isoformat(), 
+                                   end_dt.isoformat(),
+                                   min_lat, max_lat, 
+                                   min_lon, max_lon,
+                                   "Large")
 
-        xmlFile = "AIRS.xml"
-        f = open(xmlFile, 'w')
+    #write GRQ xml results to file
+    xml_file = "AIRS.xml"
+    with open(xml_file, 'w') as f:
         f.write(results)
-        f.close() 
-        tree = ET.parse(xmlFile)
-        root = tree.getroot()
-        matches = tree._root.getchildren()
 
-        if len(matches) > 0:
-            print "NOAA data:", row['DATE'], row['LATITUDE'], row['LONGITUDE'], row['HLY-TEMP-NORMAL']
-            #print results
-            print len(matches)
-            print "matched AIRS:", len(matches)
-            
- 
-            for result in root.getchildren():
-                print result.find('{http://sciflo.jpl.nasa.gov/2006v1/sf}objectid').text
-                print result.find('{http://sciflo.jpl.nasa.gov/2006v1/sf}starttime').text
-                print result.find('{http://sciflo.jpl.nasa.gov/2006v1/sf}endtime').text
-                print result.find('{http://sciflo.jpl.nasa.gov/2006v1/sf}latMin').text
-                print result.find('{http://sciflo.jpl.nasa.gov/2006v1/sf}latMax').text
-                print result.find('{http://sciflo.jpl.nasa.gov/2006v1/sf}lonMin').text
-                print result.find('{http://sciflo.jpl.nasa.gov/2006v1/sf}lonMax').text
+    #parse xml
+    root = ET.parse(xml_file).getroot()
+    matches = root.getchildren()
+    #print len(rows), len(matches)
+    #print "matched AIRS:", len(matches)
 
-    # cleanup
-    f.close()
+    #create AIRS start/end time array
+    sfns = "http://sciflo.jpl.nasa.gov/2006v1/sf"
+    airs_times = []
+    for match in matches:
+        airs_str_epoch = getEpoch(match.find('{%s}starttime' % sfns).text)
+        tmp_dt = match.find('{%s}endtime' % sfns).text
+        airs_end_epoch = getEpoch(match.find('{%s}endtime' % sfns).text)
+        airs_times.append([airs_str_epoch, airs_end_epoch])
+    airs_times = N.array(airs_times)
+    print airs_times.shape
+    print airs_times
+
+    #find matchup by time
+    coarse_match = []
+    for row in rows:
+        noaa_epoch = getNOAAEpoch(row['DATE'])
+        time_match = N.where(
+                     (
+                        (noaa_epoch >= airs_times[:, 0]) &
+                        (noaa_epoch <= airs_times[:, 1])
+                     ) == True)[0]
+        if len(time_match) > 0:
+            airs_match = matches[time_match]
+            for url in airs_match.findall('{%s}urls/{%s}url' % (sfns, sfns)):
+                if url.text.startswith('file://'): continue
+                if 'L2.RetStd' in url.text:
+                    coarse_match.append({time_match[0]: url.text})
+                    break
+    print "Total coarse match:", len(coarse_match)
+    print coarse_match
 
 if __name__ == "__main__":
     main()
