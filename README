@@ -17,6 +17,8 @@ airs_minlat: x,
 airs_minlon: x,
 airs_maxlat: x,
 airs_maxlon: x,
+noaa_temp: x,
+airs_temp: x,
 }
 
 
