@@ -4,3 +4,23 @@ To run coarse matchup
 
 To run fine matchup
 -------------------
+
+Assume data is staged.
+
+key,value
+yyyymmddhh:mm, CourseMatchup
+
+CourseMatchup {
+noaa_lat: x,
+noaa_lon: x,
+airs_minlat: x,
+airs_minlon: x,
+airs_maxlat: x,
+airs_maxlon: x,
+airs_startTime: x,
+airs_endTime: x,
+airs_filename = "" 
+}
+
+
+Distance = 
