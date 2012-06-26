@@ -17,10 +17,7 @@ airs_minlat: x,
 airs_minlon: x,
 airs_maxlat: x,
 airs_maxlon: x,
-airs_startTime: x,
-airs_endTime: x,
-airs_filename = "" 
 }
 
 
-Distance = 
+Distance and time difference in output.
